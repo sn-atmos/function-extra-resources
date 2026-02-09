@@ -13,16 +13,12 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
+	v1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/crossplane-contrib/function-extra-resources/input/v1beta1"
-)
-
-// Key to retrieve extras at.
-const (
-	FunctionContextKeyExtraResources = "apiextensions.crossplane.io/extra-resources"
 )
 
 // Function returns whatever response you ask it to.
@@ -87,6 +83,20 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	t := in.Spec.Into.GetIntoType()
+	switch t {
+	case v1beta1.IntoTypeContext:
+		if err := f.putExtrasIntoContextKey(rsp, in, verifiedExtras); err != nil {
+			response.Fatal(rsp, err)
+		}
+	default:
+		response.Fatal(rsp, errors.Errorf("unknown into type: %q", t))
+	}
+
+	return rsp, nil
+}
+
+func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1beta1.Input, verifiedExtras map[string][]unstructured.Unstructured) error {
 	out := &unstructured.Unstructured{Object: map[string]interface{}{}}
 	for into, extras := range verifiedExtras {
 		li := []interface{}{}
@@ -98,13 +108,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 
 	s, err := resource.AsStruct(out)
 	if err != nil {
-		response.Fatal(rsp, errors.Wrap(err, "cannot convert unstructured to protobuf Struct well-known type"))
-		return rsp, nil
+		return errors.Wrap(err, "cannot convert unstructured to protobuf Struct well-known type")
 	}
 
-	response.SetContextKey(rsp, FunctionContextKeyExtraResources, structpb.NewStructValue(s))
-
-	return rsp, nil
+	response.SetContextKey(rsp, in.Spec.Into.GetIntoContextKey(), structpb.NewStructValue(s))
+	return nil
 }
 
 // Build requirements takes input and outputs an array of external resoruce requirements to request
