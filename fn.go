@@ -91,48 +91,55 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	var out *unstructured.Unstructured
+	var key string
+
 	t := in.Spec.Into.GetIntoType()
 	switch t {
 	case v1beta1.IntoTypeContext:
-		if err := f.putExtrasIntoContextKey(rsp, in, verifiedExtras); err != nil {
-			response.Fatal(rsp, err)
-		}
+		out, err = f.intoContext(verifiedExtras)
+		key = in.Spec.Into.GetIntoContextKey()
 	case v1beta1.IntoTypeEnvironment:
-		if err := f.putExtrasIntoEnvironment(req, rsp, verifiedExtras); err != nil {
-			response.Fatal(rsp, err)
-		}
+		out, err = f.intoEnvironment(req, verifiedExtras)
+		key = FunctionContextKeyEnvironment
 	default:
-		response.Fatal(rsp, errors.Errorf("unknown into type: %q", t))
+		err = errors.Errorf("unknown into type: %q", t)
 	}
+
+	if err != nil {
+		response.Fatal(rsp, err)
+		return rsp, nil
+	}
+
+	v, err := resource.AsStruct(out)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot convert object to protobuf Struct well-known type"))
+		return rsp, nil
+	}
+	response.SetContextKey(rsp, key, structpb.NewStructValue(v))
 
 	return rsp, nil
 }
 
-func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1beta1.Input, verifiedExtras map[string][]interface{}) error {
+func (f *Function) intoContext(verifiedExtras map[string][]interface{}) (*unstructured.Unstructured, error) {
 	out := &unstructured.Unstructured{Object: map[string]interface{}{}}
 	for toFieldPath, extras := range verifiedExtras {
 		if toFieldPath != "" {
 			unstructured.SetNestedField(out.Object, extras, strings.Split(toFieldPath, ".")...)
 		} else {
-			return errors.New("must specify intoFieldPath for type Context")
+			return nil, errors.New("must specify intoFieldPath for type Context")
 		}
 	}
 
-	s, err := resource.AsStruct(out)
-	if err != nil {
-		return errors.Wrap(err, "cannot convert unstructured to protobuf Struct well-known type")
-	}
-
-	response.SetContextKey(rsp, in.Spec.Into.GetIntoContextKey(), structpb.NewStructValue(s))
-	return nil
+	return out, nil
 }
 
-func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.RunFunctionResponse, verifiedExtras map[string][]interface{}) error {
+func (f *Function) intoEnvironment(req *v1.RunFunctionRequest, verifiedExtras map[string][]interface{}) (*unstructured.Unstructured, error) {
 	var inputEnv *unstructured.Unstructured
 	if v, ok := request.GetContextKey(req, FunctionContextKeyEnvironment); ok {
 		inputEnv = &unstructured.Unstructured{}
 		if err := resource.AsObject(v.GetStructValue(), inputEnv); err != nil {
-			return errors.Wrapf(err, "cannot get Composition environment from %T context key %q", req, FunctionContextKeyEnvironment)
+			return nil, errors.Wrapf(err, "cannot get Composition environment from %T context key %q", req, FunctionContextKeyEnvironment)
 		}
 		f.log.Debug("Loaded Composition environment from Function context", "context-key", FunctionContextKeyEnvironment)
 	}
@@ -147,7 +154,7 @@ func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.
 			} else if e, ok := extra.(map[string]interface{}); ok {
 				mergedData = mergeMaps(mergedData, e)
 			} else {
-				return errors.New("must specify intoFieldPath for raw value")
+				return nil, errors.New("must specify intoFieldPath for raw value")
 			}
 		}
 	}
@@ -162,14 +169,8 @@ func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.
 	if out.GroupVersionKind().Empty() {
 		out.SetGroupVersionKind(schema.GroupVersionKind{Group: "internal.crossplane.io", Kind: "Environment", Version: "v1alpha1"})
 	}
-	v, err := resource.AsStruct(out)
-	if err != nil {
-		return errors.Wrap(err, "cannot convert Composition environment to protobuf Struct well-known type")
-	}
-	f.log.Debug("Computed Composition environment", "environment", v)
-	response.SetContextKey(rsp, FunctionContextKeyEnvironment, structpb.NewStructValue(v))
 
-	return nil
+	return out, nil
 }
 
 // Build requirements takes input and outputs an array of external resoruce requirements to request
