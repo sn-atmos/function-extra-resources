@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 
@@ -118,8 +119,8 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 // from Crossplane's external resource API.
 func buildRequirements(in *v1beta1.Input, xr *resource.Composite) (*fnv1.Requirements, error) { //nolint:gocyclo // Adding non-nil validations increases function complexity.
 	extraResources := make(map[string]*fnv1.ResourceSelector, len(in.Spec.ExtraResources))
-	for _, extraResource := range in.Spec.ExtraResources {
-		extraResName := extraResource.Into
+	for i, extraResource := range in.Spec.ExtraResources {
+		extraResName := fmt.Sprintf("resources-%d", i)
 		switch extraResource.Type {
 		case v1beta1.ResourceSourceTypeReference, "":
 			extraResources[extraResName] = &fnv1.ResourceSelector{
@@ -173,8 +174,8 @@ func buildRequirements(in *v1beta1.Input, xr *resource.Composite) (*fnv1.Require
 func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource.Required, //nolint:gocyclo // TODO(reedjosh): refactor
 ) (cleanedExtras map[string][]unstructured.Unstructured, err error) {
 	cleanedExtras = make(map[string][]unstructured.Unstructured)
-	for _, extraResource := range in.Spec.ExtraResources {
-		extraResName := extraResource.Into
+	for i, extraResource := range in.Spec.ExtraResources {
+		extraResName := fmt.Sprintf("resources-%d", i)
 		resources, ok := extraResources[extraResName]
 		if !ok {
 			return nil, errors.Errorf("cannot find expected extra resource %q", extraResName)
@@ -190,7 +191,7 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 			if len(resources) > 1 {
 				return nil, errors.Errorf("expected exactly one extra resource %q, got %d", extraResName, len(resources))
 			}
-			cleanedExtras[extraResName] = append(cleanedExtras[extraResName], *resources[0].Resource)
+			cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], *resources[0].Resource)
 
 		case v1beta1.ResourceSourceTypeSelector:
 			selector := extraResource.Selector
@@ -204,7 +205,7 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 				resources = resources[:*selector.MaxMatch]
 			}
 			for _, r := range resources {
-				cleanedExtras[extraResName] = append(cleanedExtras[extraResName], *r.Resource)
+				cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], *r.Resource)
 			}
 		}
 	}
