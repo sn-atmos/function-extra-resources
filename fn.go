@@ -267,6 +267,7 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 		if !ok {
 			return nil, errors.Errorf("cannot find expected extra resource %q", extraResName)
 		}
+
 		switch extraResource.GetType() {
 		case v1beta1.ResourceSourceTypeReference:
 			if len(resources) == 0 {
@@ -278,7 +279,6 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 			if len(resources) > 1 {
 				return nil, errors.Errorf("expected exactly one extra resource %q, got %d", extraResName, len(resources))
 			}
-			cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], *resources[0].Resource)
 
 		case v1beta1.ResourceSourceTypeSelector:
 			selector := extraResource.Selector
@@ -291,9 +291,10 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 			if selector.MaxMatch != nil && uint64(len(resources)) > *selector.MaxMatch {
 				resources = resources[:*selector.MaxMatch]
 			}
-			for _, r := range resources {
-				cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], *r.Resource)
-			}
+		}
+
+		for _, r := range resources {
+			cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], *r.Resource)
 		}
 	}
 	return cleanedExtras, nil
