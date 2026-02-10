@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
@@ -17,6 +18,12 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/crossplane-contrib/function-extra-resources/input/v1beta1"
+)
+
+const (
+	// FunctionContextKeyEnvironment is a well-known Context key where the computed Environment
+	// will be stored, so that Crossplane v1 and other functions can access it, e.g. function-patch-and-transform.
+	FunctionContextKeyEnvironment = "apiextensions.crossplane.io/environment"
 )
 
 // Function returns whatever response you ask it to.
@@ -126,13 +133,33 @@ func (f *Function) intoContext(verifiedExtras map[string][]unstructured.Unstruct
 }
 
 func (f *Function) intoEnvironment(req *fnv1.RunFunctionRequest, verifiedExtras map[string][]unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	var inputEnv *unstructured.Unstructured
+	if v, ok := request.GetContextKey(req, FunctionContextKeyEnvironment); ok {
+		inputEnv = &unstructured.Unstructured{}
+		if err := resource.AsObject(v.GetStructValue(), inputEnv); err != nil {
+			return nil, errors.Wrapf(err, "cannot get Composition environment from %T context key %q", req, FunctionContextKeyEnvironment)
+		}
+		f.log.Debug("Loaded Composition environment from Function context", "context-key", FunctionContextKeyEnvironment)
+	}
+
 	mergedData := map[string]interface{}{}
 	for into, extras := range verifiedExtras {
 		data, err := mergeEnvConfigsData(extras)
 		if err != nil {
 			return nil, errors.Wrapf(err, "cannot merge environment data")
 		}
-		mergedData = mergeMaps(mergedData, map[string]interface{}{into: data,})
+		mergedData = mergeMaps(mergedData, map[string]interface{}{into: data})
+	}
+
+	// merge input env if any
+	if inputEnv != nil {
+		mergedData = mergeMaps(inputEnv.Object, mergedData)
+	}
+
+	// build environment and return it in the response as context
+	out := &unstructured.Unstructured{Object: mergedData}
+	if out.GroupVersionKind().Empty() {
+		out.SetGroupVersionKind(schema.GroupVersionKind{Group: "internal.crossplane.io", Kind: "Environment", Version: "v1alpha1"})
 	}
 
 	return out, nil
