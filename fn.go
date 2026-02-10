@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
@@ -19,6 +20,12 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	"github.com/crossplane-contrib/function-extra-resources/input/v1beta1"
+)
+
+const (
+	// FunctionContextKeyEnvironment is a well-known Context key where the computed Environment
+	// will be stored, so that Crossplane v1 and other functions can access it, e.g. function-patch-and-transform.
+	FunctionContextKeyEnvironment = "apiextensions.crossplane.io/environment"
 )
 
 // Function returns whatever response you ask it to.
@@ -90,7 +97,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			response.Fatal(rsp, err)
 		}
 	case v1beta1.IntoTypeEnvironment:
-		if err := f.putExtrasIntoEnvironment(rsp, verifiedExtras); err != nil {
+		if err := f.putExtrasIntoEnvironment(req, rsp, verifiedExtras); err != nil {
 			response.Fatal(rsp, err)
 		}
 	default:
@@ -119,7 +126,16 @@ func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1be
 	return nil
 }
 
-func (f *Function) putExtrasIntoEnvironment(rsp *v1.RunFunctionResponse, verifiedExtras map[string][]unstructured.Unstructured) error {
+func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.RunFunctionResponse, verifiedExtras map[string][]unstructured.Unstructured) error {
+	var inputEnv *unstructured.Unstructured
+	if v, ok := request.GetContextKey(req, FunctionContextKeyEnvironment); ok {
+		inputEnv = &unstructured.Unstructured{}
+		if err := resource.AsObject(v.GetStructValue(), inputEnv); err != nil {
+			return errors.Wrapf(err, "cannot get Composition environment from %T context key %q", req, FunctionContextKeyEnvironment)
+		}
+		f.log.Debug("Loaded Composition environment from Function context", "context-key", FunctionContextKeyEnvironment)
+	}
+
 	mergedData := map[string]interface{}{}
 	for into, extras := range verifiedExtras {
 		data, err := mergeEnvConfigsData(extras)
@@ -133,6 +149,23 @@ func (f *Function) putExtrasIntoEnvironment(rsp *v1.RunFunctionResponse, verifie
 		}
 		mergedData = mergeMaps(mergedData, data)
 	}
+
+	// merge input env if any
+	if inputEnv != nil {
+		mergedData = mergeMaps(inputEnv.Object, mergedData)
+	}
+
+	// build environment and return it in the response as context
+	out := &unstructured.Unstructured{Object: mergedData}
+	if out.GroupVersionKind().Empty() {
+		out.SetGroupVersionKind(schema.GroupVersionKind{Group: "internal.crossplane.io", Kind: "Environment", Version: "v1alpha1"})
+	}
+	v, err := resource.AsStruct(out)
+	if err != nil {
+		return errors.Wrap(err, "cannot convert Composition environment to protobuf Struct well-known type")
+	}
+	f.log.Debug("Computed Composition environment", "environment", v)
+	response.SetContextKey(rsp, FunctionContextKeyEnvironment, structpb.NewStructValue(v))
 
 	return nil
 }
