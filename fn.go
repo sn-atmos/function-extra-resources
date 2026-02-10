@@ -89,6 +89,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	case v1beta1.IntoTypeContext:
 		out, err = f.intoContext(verifiedExtras)
 		key = in.Spec.Into.GetIntoContextKey()
+	case v1beta1.IntoTypeEnvironment:
+		out, err = f.intoEnvironment(req, verifiedExtras)
+		key = FunctionContextKeyEnvironment
 	default:
 		err = errors.Errorf("unknown into type: %q", t)
 	}
@@ -117,6 +120,19 @@ func (f *Function) intoContext(verifiedExtras map[string][]unstructured.Unstruct
 			li = append(li, e.Object)
 		}
 		unstructured.SetNestedField(out.Object, li, into)
+	}
+
+	return out, nil
+}
+
+func (f *Function) intoEnvironment(req *fnv1.RunFunctionRequest, verifiedExtras map[string][]unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	mergedData := map[string]interface{}{}
+	for into, extras := range verifiedExtras {
+		data, err := mergeEnvConfigsData(extras)
+		if err != nil {
+			return nil, errors.Wrapf(err, "cannot merge environment data")
+		}
+		mergedData = mergeMaps(mergedData, map[string]interface{}{into: data,})
 	}
 
 	return out, nil
