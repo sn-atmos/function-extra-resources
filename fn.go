@@ -89,6 +89,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		if err := f.putExtrasIntoContextKey(rsp, in, verifiedExtras); err != nil {
 			response.Fatal(rsp, err)
 		}
+	case v1beta1.IntoTypeEnvironment:
+		if err := f.putExtrasIntoEnvironment(rsp, verifiedExtras); err != nil {
+			response.Fatal(rsp, err)
+		}
 	default:
 		response.Fatal(rsp, errors.Errorf("unknown into type: %q", t))
 	}
@@ -112,6 +116,24 @@ func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1be
 	}
 
 	response.SetContextKey(rsp, in.Spec.Into.GetIntoContextKey(), structpb.NewStructValue(s))
+	return nil
+}
+
+func (f *Function) putExtrasIntoEnvironment(rsp *v1.RunFunctionResponse, verifiedExtras map[string][]unstructured.Unstructured) error {
+	mergedData := map[string]interface{}{}
+	for into, extras := range verifiedExtras {
+		data, err := mergeEnvConfigsData(extras)
+		if err != nil {
+			return errors.Wrapf(err, "cannot merge environment data")
+		}
+		if into != "" {
+			data = map[string]interface{}{
+				into: data,
+			}
+		}
+		mergedData = mergeMaps(mergedData, data)
+	}
+
 	return nil
 }
 

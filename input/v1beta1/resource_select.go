@@ -232,7 +232,7 @@ func (pp *PatchPolicy) GetFromFieldPathPolicy() FromFieldPathPolicy {
 type Into struct {
 	// Type determines how to return the results. The default is to store the
 	// extra resources in a context key.
-	// +kubebuilder:validation:Enum=Context
+	// +kubebuilder:validation:Enum=Context;Environment
 	// +kubebuilder:default=Context
 	Type *IntoType `json:"type,omitempty"`
 
@@ -246,7 +246,8 @@ type IntoType string
 
 // IntoType types.
 const (
-	IntoTypeContext IntoType = "Context"
+	IntoTypeContext     IntoType = "Context"
+	IntoTypeEnvironment IntoType = "Environment"
 )
 
 // GetIntoContextKey returns the Type for this Into, defaulting to
