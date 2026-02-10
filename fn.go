@@ -177,6 +177,38 @@ func buildRequirements(in *v1beta1.Input, xr *resource.Composite) (*fnv1.Require
 	return &fnv1.Requirements{Resources: extraResources}, nil
 }
 
+func mergeEnvConfigsData(configs []unstructured.Unstructured) (map[string]interface{}, error) {
+	merged := map[string]interface{}{}
+	for _, c := range configs {
+		data := map[string]interface{}{}
+		if err := fieldpath.Pave(c.Object).GetValueInto("data", &data); err != nil {
+			return nil, errors.Wrapf(err, "cannot get data from environment config %q", c.GetName())
+		}
+
+		merged = mergeMaps(merged, data)
+	}
+	return merged, nil
+}
+
+func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(a))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		if v, ok := v.(map[string]interface{}); ok {
+			if bv, ok := out[k]; ok {
+				if bv, ok := bv.(map[string]interface{}); ok {
+					out[k] = mergeMaps(bv, v)
+					continue
+				}
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // Verify Min/Max and sort extra resources by field path within a single kind.
 func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource.Required, //nolint:gocyclo // TODO(reedjosh): refactor
 ) (cleanedExtras map[string][]unstructured.Unstructured, err error) {
