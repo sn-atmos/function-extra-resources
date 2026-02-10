@@ -101,8 +101,8 @@ type ResourceSource struct {
 	// +optional
 	Namespace *string `json:"namespace,omitempty"`
 
-	// Into is the key into which extra resources for this selector will be placed.
-	Into string `json:"into"`
+	// ToFieldPath specifies the field path into which extra resources for this selector will be placed.
+	ToFieldPath *string `json:"toFieldPath,omitempty"`
 
 	// FromFieldPath specifies a field path with the object extract, instead of the whole object.
 	FromFieldPath *string `json:"fromFieldPath,omitempty"`

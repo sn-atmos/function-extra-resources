@@ -110,8 +110,12 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 
 func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1beta1.Input, verifiedExtras map[string][]interface{}) error {
 	out := &unstructured.Unstructured{Object: map[string]interface{}{}}
-	for into, extras := range verifiedExtras {
-		unstructured.SetNestedField(out.Object, extras, into)
+	for toFieldPath, extras := range verifiedExtras {
+		if toFieldPath != "" {
+			unstructured.SetNestedField(out.Object, extras, strings.Split(toFieldPath, ".")...)
+		} else {
+			return errors.New("must specify intoFieldPath for type Context")
+		}
 	}
 
 	s, err := resource.AsStruct(out)
@@ -134,11 +138,11 @@ func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.
 	}
 
 	mergedData := map[string]interface{}{}
-	for into, extras := range verifiedExtras {
+	for toFieldPath, extras := range verifiedExtras {
 		for _, extra := range extras {
-			if into != "" {
+			if toFieldPath != "" {
 				d := map[string]interface{}{}
-				unstructured.SetNestedField(d, extra, strings.Split(into, ".")...)
+				unstructured.SetNestedField(d, extra, strings.Split(toFieldPath, ".")...)
 				mergedData = mergeMaps(mergedData, d)
 			} else if e, ok := extra.(map[string]interface{}); ok {
 				mergedData = mergeMaps(mergedData, e)
@@ -248,6 +252,10 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 	cleanedExtras = make(map[string][]interface{})
 	for i, extraResource := range in.Spec.ExtraResources {
 		extraResName := fmt.Sprintf("resources-%d", i)
+		toFieldPath := ""
+		if extraResource.ToFieldPath != nil {
+			toFieldPath = *extraResource.ToFieldPath
+		}
 		resources, ok := extraResources[extraResName]
 		if !ok {
 			return nil, errors.Errorf("cannot find expected extra resource %q", extraResName)
@@ -289,9 +297,9 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 				if err != nil {
 					return nil, err
 				}
-				cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], object)
+				cleanedExtras[toFieldPath] = append(cleanedExtras[toFieldPath], object)
 			} else {
-				cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], r.Resource.Object)
+				cleanedExtras[toFieldPath] = append(cleanedExtras[toFieldPath], r.Resource.Object)
 			}
 		}
 	}
