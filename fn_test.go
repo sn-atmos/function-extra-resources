@@ -356,7 +356,8 @@ func TestRunFunction(t *testing.T) {
 									"apiVersion": "apiextensions.crossplane.io/v1beta1",
 									"ref": {
 										"name": "my-env-config"
-									}
+									},
+									"fromFieldPath": "data"
 								},
 								{
 									"type": "Reference",
@@ -364,7 +365,8 @@ func TestRunFunction(t *testing.T) {
 									"apiVersion": "apiextensions.crossplane.io/v1beta1",
 									"ref": {
 										"name": "my-second-env-config"
-									}
+									},
+									"fromFieldPath": "data"
 								},
 								{
 									"type": "Selector",
@@ -378,7 +380,8 @@ func TestRunFunction(t *testing.T) {
 												"value": "bar"
 											}
 										]
-									}
+									},
+									"fromFieldPath": "data"
 								},
 								{
 									"type": "Selector",
@@ -392,7 +395,8 @@ func TestRunFunction(t *testing.T) {
 												"fromFieldPathPolicy": "Optional"
 											}
 										]
-									}
+									},
+									"fromFieldPath": "data"
 								},
 								{
 									"type": "Selector",
@@ -407,6 +411,7 @@ func TestRunFunction(t *testing.T) {
 											}
 										]
 									},
+									"fromFieldPath": "data",
 									"into": "nested"
 								}
 							]

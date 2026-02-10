@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -107,14 +108,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	return rsp, nil
 }
 
-func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1beta1.Input, verifiedExtras map[string][]unstructured.Unstructured) error {
+func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1beta1.Input, verifiedExtras map[string][]interface{}) error {
 	out := &unstructured.Unstructured{Object: map[string]interface{}{}}
 	for into, extras := range verifiedExtras {
-		li := []interface{}{}
-		for _, e := range extras {
-			li = append(li, e.Object)
-		}
-		unstructured.SetNestedField(out.Object, li, into)
+		unstructured.SetNestedField(out.Object, extras, into)
 	}
 
 	s, err := resource.AsStruct(out)
@@ -126,7 +123,7 @@ func (f *Function) putExtrasIntoContextKey(rsp *v1.RunFunctionResponse, in *v1be
 	return nil
 }
 
-func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.RunFunctionResponse, verifiedExtras map[string][]unstructured.Unstructured) error {
+func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.RunFunctionResponse, verifiedExtras map[string][]interface{}) error {
 	var inputEnv *unstructured.Unstructured
 	if v, ok := request.GetContextKey(req, FunctionContextKeyEnvironment); ok {
 		inputEnv = &unstructured.Unstructured{}
@@ -138,16 +135,17 @@ func (f *Function) putExtrasIntoEnvironment(req *v1.RunFunctionRequest, rsp *v1.
 
 	mergedData := map[string]interface{}{}
 	for into, extras := range verifiedExtras {
-		data, err := mergeEnvConfigsData(extras)
-		if err != nil {
-			return errors.Wrapf(err, "cannot merge environment data")
-		}
-		if into != "" {
-			data = map[string]interface{}{
-				into: data,
+		for _, extra := range extras {
+			if into != "" {
+				d := map[string]interface{}{}
+				unstructured.SetNestedField(d, extra, strings.Split(into, ".")...)
+				mergedData = mergeMaps(mergedData, d)
+			} else if e, ok := extra.(map[string]interface{}); ok {
+				mergedData = mergeMaps(mergedData, e)
+			} else {
+				return errors.New("must specify intoFieldPath for raw value")
 			}
 		}
-		mergedData = mergeMaps(mergedData, data)
 	}
 
 	// merge input env if any
@@ -225,19 +223,6 @@ func buildRequirements(in *v1beta1.Input, xr *resource.Composite) (*fnv1.Require
 	return &fnv1.Requirements{Resources: extraResources}, nil
 }
 
-func mergeEnvConfigsData(configs []unstructured.Unstructured) (map[string]interface{}, error) {
-	merged := map[string]interface{}{}
-	for _, c := range configs {
-		data := map[string]interface{}{}
-		if err := fieldpath.Pave(c.Object).GetValueInto("data", &data); err != nil {
-			return nil, errors.Wrapf(err, "cannot get data from environment config %q", c.GetName())
-		}
-
-		merged = mergeMaps(merged, data)
-	}
-	return merged, nil
-}
-
 func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(a))
 	for k, v := range a {
@@ -259,8 +244,8 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 
 // Verify Min/Max and sort extra resources by field path within a single kind.
 func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource.Required, //nolint:gocyclo // TODO(reedjosh): refactor
-) (cleanedExtras map[string][]unstructured.Unstructured, err error) {
-	cleanedExtras = make(map[string][]unstructured.Unstructured)
+) (cleanedExtras map[string][]interface{}, err error) {
+	cleanedExtras = make(map[string][]interface{})
 	for i, extraResource := range in.Spec.ExtraResources {
 		extraResName := fmt.Sprintf("resources-%d", i)
 		resources, ok := extraResources[extraResName]
@@ -294,7 +279,20 @@ func verifyAndSortExtras(in *v1beta1.Input, extraResources map[string][]resource
 		}
 
 		for _, r := range resources {
-			cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], *r.Resource)
+			if path := extraResource.FromFieldPath; path != nil {
+				if *path == "" {
+					return nil, errors.New("fromFieldPath cannot be empty, omit the field to get the whole object")
+				}
+
+				// Extract part of the object, from `FromFieldPath`.
+				object, _, err := unstructured.NestedFieldNoCopy(r.Resource.Object, strings.Split(*path, ".")...)
+				if err != nil {
+					return nil, err
+				}
+				cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], object)
+			} else {
+				cleanedExtras[extraResource.Into] = append(cleanedExtras[extraResource.Into], r.Resource.Object)
+			}
 		}
 	}
 	return cleanedExtras, nil
